@@ -324,6 +324,3 @@ Workflow запускается на `push` и `pull_request` в `main`, поэ�
 Полный текст соглашения — в файле [`LICENSE`](LICENSE).
 
 ---
-
-Проект выполнен в рамках домашнего задания модуля 6 «Vpe04» курса Zerocoder.
-Тема: **CI/CD, GitHub Actions, GitFlow, Secrets**.
