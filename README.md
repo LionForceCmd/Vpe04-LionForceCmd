@@ -1,26 +1,3 @@
-# Vpe04 — CI/CD: сборка и автодеплой FastAPI-приложения
-
-> ⛔ **Лицензия: использование проекта полностью запрещено.**
-> Ни коммерческое, ни некоммерческое использование не разрешено.
-> Подробности — в разделе [Лицензия](#лицензия) и в файле [`LICENSE`](LICENSE).
-
-Домашнее задание модуля 6: FastAPI-приложение в Docker-контейнере, которое
-автоматически собирается и выкатывается на сервер через GitHub Actions.
-
-## Содержание
-
-- [Что делает проект](#что-делает-проект)
-- [Эндпоинты](#эндпоинты)
-- [Структура проекта](#структура-проекта)
-- [Быстрый старт](#быстрый-старт)
-- [Запуск в Docker](#запуск-в-docker)
-- [CI/CD: как работает пайплайн](#cicd-как-работает-пайплайн)
-- [Настройка Secrets](#настройка-secrets)
-- [Проверка деплоя](#проверка-деплоя)
-- [Модель ветвления GitFlow](#модель-ветвления-gitflow)
-- [Решение типовых проблем](#решение-типовых-проблем)
-- [Лицензия](#лицензия)
-
 ## Что делает проект
 
 Небольшое FastAPI-приложение **Time Server API**, которое отдаёт текущее время
@@ -28,261 +5,30 @@
 приложением для проверки CI/CD-пайплайна: код → Docker-образ → GitHub
 Container Registry → сервер.
 
-## Эндпоинты
 
-| Метод | Путь         | Описание                                            |
-|-------|--------------|-----------------------------------------------------|
-| GET   | `/`          | Информация о сервисе и список эндпоинтов            |
-| GET   | `/health`    | Проверка живости (используется в `HEALTHCHECK`)     |
-| GET   | `/time`      | Текущее время в формате `HH:MM:SS` (UTC)            |
-| GET   | `/datetime`  | Полная дата и время в формате ISO 8601 (UTC)        |
-| GET   | `/date`      | Текущая дата и день недели (UTC)                    |
-| GET   | `/convert`   | Конвертация времени по часовому поясу в UTC         |
-
-Примеры:
-
-```bash
-curl http://localhost:8000/
-# {"message":"Добро пожаловать в Time Server API","docs":"/docs", ...}
-
-curl http://localhost:8000/time
-# {"time":"15:11:09","timezone":"UTC"}
-
-curl "http://localhost:8000/convert?time=14:30&city=Europe/Moscow"
-# {"source":{"time":"14:30","city":"Europe/Moscow"},"target":{"time":"11:30","city":"UTC"}}
-```
-
-Интерактивная документация Swagger UI доступна на `/docs`, ReDoc — на `/redoc`.
-
-## Структура проекта
-
-```
-Vpe04/
-├── .github/
-│   └── workflows/
-│       └── deploy.yml      # CI/CD-пайплайн: build + push в GHCR + деплой по SSH
-├── tests/
-│   └── test_main.py        # тесты эндпоинтов (pytest + TestClient)
-├── .dockerignore           # что не попадает в Docker-образ
-├── .gitignore
-├── Dockerfile              # сборка образа на python:3.12-slim
-├── LICENSE                 # запрет любого использования
-├── main.py                 # код FastAPI-приложения
-├── pytest.ini              # настройки pytest
-├── README.md
-├── requirements.txt        # runtime-зависимости
-└── requirements-dev.txt    # зависимости для разработки и тестов
-```
-
-## Быстрый старт
-
-Требуется Python 3.10+.
-
-```bash
-# 1. Создать виртуальное окружение
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-
-# 2. Установить зависимости
-pip install -r requirements-dev.txt
-
-# 3. Запустить сервер
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Приложение будет доступно на <http://localhost:8000>, документация — на
-<http://localhost:8000/docs>.
-
-### Тесты
-
-```bash
-python -m pytest -q
-```
-
-Ожидаемый результат: `9 passed`.
-
-## Запуск в Docker
-
-```bash
-# Сборка образа
-docker build -t time-server-api:local .
-
-# Запуск контейнера
-docker run -d --name time-server-api -p 8000:8000 time-server-api:local
-
-# Проверка
-curl http://localhost:8000/health
-# {"status":"healthy"}
-
-# Логи и остановка
-docker logs -f time-server-api
-docker rm -f time-server-api
-```
-
-## CI/CD: как работает пайплайн
-
-Файл `.github/workflows/deploy.yml` описывает два job-а с зависимостью
-`needs: build` — деплой не начнётся, пока сборка не завершится успешно.
-
-### Триггеры
-
-```yaml
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:      # ручной запуск из вкладки Actions
-```
-
-### Job `build` — сборка и публикация образа
-
-| Шаг | Действие | Назначение |
-|-----|----------|------------|
-| 1 | `actions/checkout@v4` | Клонирование репозитория на раннер |
-| 2 | `actions/setup-python@v5` | Установка Python 3.12 + кеш pip |
-| 3 | `pip install -r requirements-dev.txt` | Установка зависимостей |
-| 4 | `python -m pytest -q` | Прогон тестов (CI — проверка до сборки) |
-| 5 | `docker/setup-buildx-action@v3` | Подключение Docker Buildx |
-| 6 | `docker/login-action@v3` | Авторизация в `ghcr.io` через `GITHUB_TOKEN` |
-| 7 | `docker/metadata-action@v5` | Генерация тегов и метаданных образа |
-| 8 | `docker/build-push-action@v6` | Сборка и **push** образа в GHCR |
-
-Авторизация и публикация выполняются **только для push в `main`**
-(условие `if: github.event_name != 'pull_request'`), чтобы pull request
-из форков не имели доступ к токену.
-
-Теги образа:
-
-- `ghcr.io/<owner>/<repo>:main` — по имени ветки;
-- `ghcr.io/<owner>/<repo>:<sha>` — по коммиту;
-- `ghcr.io/<owner>/<repo>:latest` — для `main` (используется при деплое).
-
-### Job `deploy` — выкатка на сервер по SSH (задание со звёздочкой ⭐)
-
-| Шаг | Действие | Назначение |
-|-----|----------|------------|
-| 1 | `appleboy/ssh-action@v1` | Подключение к серверу и выполнение скрипта |
-
-Скрипт на сервере выполняет полный цикл передеплоя:
-
-```bash
-# остановка и удаление старого контейнера (script_stop)
-docker stop time-server-api || true
-docker rm -f time-server-api || true
-
-# вход в реестр и скачивание свежего образа
-echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-docker pull ghcr.io/<owner>/<repo>:latest
-
-# запуск нового контейнера
-docker run -d \
-  --name time-server-api \
-  --restart unless-stopped \
-  -p 8000:8000 \
-  ghcr.io/<owner>/<repo>:latest
-
-# очистка старых образов
-docker image prune -f
-```
-
-Все параметры передаются в `envs:` и читаются на сервере как переменные
-окружения — токен не подставляется в текст команды и не попадает в лог.
-
-Дополнительно у `appleboy/ssh-action` есть встроенные режимы
-`script_stop`, `script_preflight` и `script_failure`, которые в этом проекте
-не используются, но доступны при необходимости.
-
-### Схема работы
-
-```
-push в main  →  runner ubuntu-latest
-                   │
-                   ├─ job: build ─── тесты ─ сборка ─ push в ghcr.io
-                   │
-                   └─ job: deploy (needs: build)
-                          SSH → docker login → docker pull → docker run
-                          → http://<IP-сервера>:8000
-```
-
-## Настройка Secrets
-
-Деплой требует четырёх секретов. Путь:
-**репозиторий → Settings → Secrets and variables → Actions → New repository secret**.
-
-| Секрет     | Значение                                        | Пример                    |
-|------------|-------------------------------------------------|---------------------------|
-| `HOST`     | IP-адрес сервера                                | `203.0.113.10`            |
-| `USERNAME` | Логин для SSH                                   | `root`                    |
-| `SSH_KEY`  | Приватный SSH-ключ (всё содержимое `.pub` не нужно) | `-----BEGIN OPENSSH PRIVATE KEY----- ...` |
-| `PORT`     | SSH-порт                                        | `22`                      |
-
-Токен `GITHUB_TOKEN` создаётся автоматически, вручную добавлять его не нужно.
-
-> ⚠️ Секреты шифруются AES-256 и передаются в workflow только на время
-> выполнения. Значения секретов нельзя вывести в лог командой `echo ${{ secrets.X }}`
-> — используйте `envs:` и обращайтесь к переменной по имени.
-
-### Подготовка сервера
-
-На сервере должен быть установлен Docker:
-
-```bash
-curl -fsSL https://get.docker.com | sh
-systemctl enable --now docker
-```
-
-## Проверка деплоя
-
-После успешного вкладка **Actions** в репозитории:
-
-1. Открыть последний запуск workflow `Build and Deploy`.
-2. Убедиться, что оба job-а (`build` и `deploy`) отмечены зелёным.
-3. В логах job-а `deploy` найти строки `Status: Downloaded newer image` и
-   вывод `docker ps` с контейнером `time-server-api`.
-4. Открыть в браузере:
-
-```bash
-curl http://<IP-сервера>:8000/
-curl http://<IP-сервера>:8000/docs
-```
-
-Ожидаемый ответ: `{"message":"Добро пожаловать в Time Server API", ...}`.
-
-Полезно сделать скриншот вкладки **Actions** с зелёными job-ами и запущенных
-контейнеров — это подтверждение выполнения задания.
-
-## Модель ветвления GitFlow
-
-Разработка ведётся по [GitFlow](https://gitflow.readthedocs.io/):
-
-```
-main       ← только стабильные релизы, защищённая ветка
-  └─ develop            ← основная разработка
-       ├─ feature/...   ← новая функциональность → PR в develop
-       ├─ release/...   ← подготовка релиза → PR в main
-       └─ hotfix/...    ← срочные правки → PR в main и develop
-```
-
-Workflow запускается на `push` и `pull_request` в `main`, поэтому:
-
-- на этапе PR в `main` выполняются тесты и сборка образа (без публикации
-  в реестр и без деплоя);
-- после merge в `main` образ публикуется и выкатывается на сервер.
-
-## Решение типовых проблем
-
-| Симптом | Причина | Решение |
-|---------|---------|---------|
-| `Error: Input required and not supplied: host` | Не задан секрет `HOST` | Добавить `HOST`, `USERNAME`, `SSH_KEY`, `PORT` в Secrets |
-| `docker: command not found` | На сервере не установлен Docker | Установить Docker на сервер (см. выше) |
-| `denied: requested access to the resource is denied` | Не хватает прав на пакеты | Проверить, что в job `build` есть `permissions: packages: write` |
-| `no matching manifest for ...` | Образ не найден в `ghcr.io/<owner>/<repo>` | Проверить `IMAGE_NAME`, имя пакета и что workflow отработал на `main` |
-| Порт 8000 недоступен извне | Порт закрыт в firewall | Открыть порт: `ufw allow 8000/tcp` |
-| Job `deploy` не запускается | Не сработало условие `if` | Workflow запускает деплой только на `push` в `main`, не на `pull_request` |
-
-Бесплатный тариф GitHub Actions ограничен 3000 минутами в месяц — этого более чем
-достаточно для учебного проекта. Расход виден в **Settings → Billing**.
+## Что было сделано
+
+По пунктам домашнего задания:
+
+| # | Требование из задания | Статус | Где выполнено |
+|---|------------------------|--------|----------------|
+| 1 | Создать простой проект (Flask- или FastAPI-приложение) | ✅ | `main.py` — FastAPI «Time Server API», эндпоинты `/`, `/health`, `/time`, `/datetime`, `/date`, `/convert` |
+| 2 | Добавить папку `.github/workflows` | ✅ | `.github/workflows/deploy.yml` |
+| 3 | Workflow запускается при **push в ветку `main`** | ✅ | `deploy.yml:7` — `on.push.branches: [main]` |
+| 4 | Workflow выполняет **сборку Docker-образа** | ✅ | `deploy.yml:71` — `docker/build-push-action@v6`; перед сборкой прогоняются тесты (`Run tests`) |
+| 5 | Workflow **пушит образ в GitHub Container Registry** | ✅ | `deploy.yml:51` — `docker/login-action@v3` + `deploy.yml:71`; образ `ghcr.io/<owner>/<repo>` с тегами `main`, `latest`, `<sha>` |
+| 6 | ⭐ *(по желанию)* Job для деплоя на сервер через SSH-Action | ⚠️ | `deploy.yml:94` — `appleboy/ssh-action@v1` написан, но **выключен**: VPS-сервера нет, job отображается как `skipped`. Включается через переменную `ENABLE_SSH_DEPLOY` и 4 секрета (`HOST`, `USERNAME`, `SSH_KEY`, `PORT`) |
+| 7 | Проверить, что после коммита в `main` workflow успешно отработал | ✅ | Run **#4**, commit `92e7a7c` — вывод `success`. Job `Build and Push Docker image` — все шаги зелёные, включая `Build and push Docker image` |
+| 8 | Выложить проект на GitHub / сделать скриншоты | ✅ | Репозиторий: `github.com/LionForceCmd/Vpe04-LionForceCmd`. Скриншот вкладки **Actions** с зелёным job-ом `build` |
+
+### Дополнительно
+
+- `Dockerfile` — сборка образа на `python:3.12-slim`, `HEALTHCHECK`, запуск через `uvicorn` на порту 8000
+- `tests/test_main.py` — 9 тестов эндпоинтов (`pytest`), прогоняются в CI до сборки образа
+- `requirements.txt` / `requirements-dev.txt` — зависимости приложения и для тестов
+- `.dockerignore`, `.gitignore` — исключение ненужных файлов из образа и репозитория
+- `LICENSE` — запрет любого использования проекта
+- Разработка велась по модели **GitFlow**: `main` → `develop` → `feature/*` → merge → `release/1.0.0`
 
 ## Лицензия
 
@@ -308,19 +54,5 @@ Workflow запускается на `push` и `pull_request` в `main`, поэ�
 **Права:** все права на проект принадлежат автору. Автор не предоставляет
 никому использование, воспроизведение, распространение, изменение или передачу
 материалов — ни в какой форме и ни в каком объёме.
-
-**Лицензия отсутствует.** Проект не лицензирован ни одной из свободных или
-проприетарных лицензий (MIT, Apache-2.0, GPL, BSD, All Rights Reserved и т. д.).
-Отсутствие файла лицензии не означает свободного использования — по умолчанию
-сохраняются все права.
-
-**Назначение.** Проект размещён исключительно для демонстрации выполненного
-учебного задания и проверки результата преподавателем.
-
-**Ответственность.** Автор не несёт ответственности за любой ущерб, причинённый
-в результате использования материалов проекта. Использование осуществляется
-исключительно на свой страх и риск.
-
-Полный текст соглашения — в файле [`LICENSE`](LICENSE).
 
 ---
