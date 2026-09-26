@@ -7,6 +7,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Job deploy (задание со звёздочкой) выключен по умолчанию: для него нужен
+# VPS-сервер с SSH-доступом. Чтобы включить:
+#   1) Settings -> Secrets and variables -> Actions -> Secrets: HOST, USERNAME, SSH_KEY, PORT
+#   2) Settings -> Secrets and variables -> Actions -> Variables: ENABLE_SSH_DEPLOY = true
+# Пока переменная не создана, job отображается как skipped и workflow остаётся зелёным.
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -72,10 +78,13 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    name: Deploy to server
+    name: Deploy to server (SSH)
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      vars.ENABLE_SSH_DEPLOY == 'true'
     permissions:
       contents: read
       packages: read

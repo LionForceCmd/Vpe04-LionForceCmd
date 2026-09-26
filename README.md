@@ -158,7 +158,12 @@ on:
 - `ghcr.io/<owner>/<repo>:<sha>` — по коммиту;
 - `ghcr.io/<owner>/<repo>:latest` — для `main` (используется при деплое).
 
-### Job `deploy` — выкатка на сервер по SSH (задание со звёздочкой ⭐)
+### Job `deploy` — выкатка на сервер по SSH (задание со звёздочкой ⭐, выключен)
+
+> **Статус: выключен.** Для этого job-а нужен VPS-сервер с SSH-доступом.
+> Сейчас сервера нет, поэтому job помечен как `skipped`, а обязательная часть
+> задания (сборка + публикация образа) работает полностью.
+> Код job-а написан и готов к включению — см. [Как включить деплой](#как-включить-деплой).
 
 | Шаг | Действие | Назначение |
 |-----|----------|------------|
@@ -189,23 +194,49 @@ docker image prune -f
 Все параметры передаются в `envs:` и читаются на сервере как переменные
 окружения — токен не подставляется в текст команды и не попадает в лог.
 
-Дополнительно у `appleboy/ssh-action` есть встроенные режимы
-`script_stop`, `script_preflight` и `script_failure`, которые в этом проекте
-не используются, но доступны при необходимости.
+Условие запуска job-а:
+
+```yaml
+if: >-
+  github.event_name != 'pull_request' &&
+  github.ref == 'refs/heads/main' &&
+  vars.ENABLE_SSH_DEPLOY == 'true'
+```
+
+Пока в репозитории нет переменной `ENABLE_SSH_DEPLOY`, job не запускается
+и не влияет на итоговый статус workflow.
+
+### Как включить деплой
+
+1. Создать VPS-сервер с Docker на нём.
+2. Сгенерировать пару SSH-ключей и положить публичный ключ на сервер:
+   ```powershell
+   ssh-keygen -t ed25519 -C "github-actions" -f "$env:USERPROFILE\.ssh\id_ed25519"
+   type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@<IP> "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+   ```
+3. Добавить 4 секрета (`HOST`, `USERNAME`, `SSH_KEY`, `PORT`) — см. раздел ниже.
+4. Создать переменную репозитория:
+   `Settings` → `Secrets and variables` → `Actions` → **Variables** →
+   `New repository variable` → имя `ENABLE_SSH_DEPLOY`, значение `true`.
+5. Сделать любой коммит в `main` — job отработает.
 
 ### Схема работы
 
 ```
 push в main  →  runner ubuntu-latest
                    │
-                   ├─ job: build ─── тесты ─ сборка ─ push в ghcr.io
+                   ├─ job: build ─── тесты ─ сборка ─ push в ghcr.io   ← работает
                    │
-                   └─ job: deploy (needs: build)
+                   └─ job: deploy (needs: build)                       ← skipped
                           SSH → docker login → docker pull → docker run
                           → http://<IP-сервера>:8000
 ```
 
 ## Настройка Secrets
+
+> **Сейчас секреты не нужны.** Job `deploy` выключен, поэтому пайплайн работает
+> без единого секрета — `GITHUB_TOKEN` GitHub выдаёт автоматически.
+> Когда появится VPS-сервер, секреты понадобятся для деплоя по SSH.
 
 Деплой требует четырёх секретов. Путь:
 **репозиторий → Settings → Secrets and variables → Actions → New repository secret**.
@@ -234,13 +265,27 @@ systemctl enable --now docker
 
 ## Проверка деплоя
 
-После успешного вкладка **Actions** в репозитории:
+### Что проверить сейчас
 
-1. Открыть последний запуск workflow `Build and Deploy`.
-2. Убедиться, что оба job-а (`build` и `deploy`) отмечены зелёным.
-3. В логах job-а `deploy` найти строки `Status: Downloaded newer image` и
-   вывод `docker ps` с контейнером `time-server-api`.
-4. Открыть в браузере:
+1. Открыть вкладку **Actions** → **Build and Deploy** → `View runs`.
+2. Убедиться, что job **Build and Push Docker image** отмечен зелёным.
+3. Раскрыть его и проверить, что все 8 шагов зелёные, включая
+   **Build and push Docker image**.
+4. Открыть вкладку **Packages** (или `https://github.com/<owner>/<repo>/pkgs`) —
+   там должен появиться пакет `Vpe04-LionForceCmd` с тегами
+   `main`, `latest` и `<sha>`.
+5. Скриншот вкладки Actions с зелёным job-ом — это подтверждение
+   выполнения задания.
+
+Job **Deploy to server (SSH)** будет серым (`skipped`) — это ожидаемо,
+сервера пока нет.
+
+### Что проверить после появления сервера
+
+1. Job `deploy` тоже станет зелёным.
+2. В его логах найти строки `Status: Downloaded newer image` и вывод
+   `docker ps` с контейнером `time-server-api`.
+3. Открыть в браузере:
 
 ```bash
 curl http://<IP-сервера>:8000/
@@ -248,9 +293,6 @@ curl http://<IP-сервера>:8000/docs
 ```
 
 Ожидаемый ответ: `{"message":"Добро пожаловать в Time Server API", ...}`.
-
-Полезно сделать скриншот вкладки **Actions** с зелёными job-ами и запущенных
-контейнеров — это подтверждение выполнения задания.
 
 ## Модель ветвления GitFlow
 
